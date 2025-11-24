@@ -159,11 +159,8 @@ When `jsonEvents` is enabled (first turn only)
 - The final assistant message is still the last `agent_message` text in the stream; if you also set `outputSchema`, the last assistant message will be the validated JSON object.
 
 ## Example chat
-Two demos ship with the package:
-
-- Terminal example (stdin): `swift run CodexExample`
-- SwiftUI chat app: `swift run CodexChatApp`
-- Example sources live under `Examples/` (e.g., `Examples/CodexExample`, `Examples/CodexChatApp`).
+SwiftUI chat app: `swift run CodexChatApp`
+Example sources live under `Examples/CodexChatApp`.
 
 ### SwiftUI chat app controls
 - JSON events toggle: applies to the first turn only. Codex CLI rejects `--json` on `resume`, so follow-up turns always drop it (stdout/stderr still stream).
