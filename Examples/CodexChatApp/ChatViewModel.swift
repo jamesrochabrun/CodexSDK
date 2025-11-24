@@ -40,19 +40,27 @@ final class ChatViewModel: ObservableObject {
   private var codexBinaryPath: String = "codex"
   
   init() {
-    var config = CodexExecConfiguration.default
+    // Use withNvmSupport() for automatic nvm detection (recommended)
+    var config = CodexExecConfiguration.withNvmSupport()
     config.enableDebugLogging = false
+    config.useLoginShell = true
+
+    // Try to detect codex binary for status display
     if let detected = CodexBinaryDetector.detect() {
-      config.command = detected.path
       codexBinaryPath = detected.path
       codexBinaryVersion = detected.version
-      let dir = (detected.path as NSString).deletingLastPathComponent
-      config.additionalPaths = [dir]
+      // If NvmPathDetector didn't find it, use the detected path
+      if let nvmPath = NvmPathDetector.detectNvmPath() {
+        config.command = "\(nvmPath)/codex"
+      } else {
+        config.command = detected.path
+      }
     } else {
       // Fallback to PATH lookup; status will show warning
       config.command = codexBinaryPath
       codexBinaryVersion = nil
     }
+
     self.client = CodexExecClient(configuration: config)
     refreshStatusText()
   }
