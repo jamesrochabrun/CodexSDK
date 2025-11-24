@@ -6,6 +6,7 @@ struct ChatView: View {
     @EnvironmentObject private var viewModel: ChatViewModel
     @State private var input: String = ""
     @FocusState private var isInputFocused: Bool
+    @State private var showingOpenPanel = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,6 +25,28 @@ struct ChatView: View {
                         }
                         .pickerStyle(.segmented)
                         .frame(maxWidth: 360)
+                        Toggle("MCP", isOn: $viewModel.mcpEnabled)
+                            .toggleStyle(.switch)
+                    }
+                    HStack {
+                        TextField("MCP config path (first turn only)", text: $viewModel.mcpConfigPath)
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(viewModel.useInlineMcp)
+                        Button("Browse") {
+                            browseForMcpConfig()
+                        }
+                        .disabled(viewModel.useInlineMcp)
+                        Toggle("Inline MCP JSON", isOn: $viewModel.useInlineMcp)
+                            .toggleStyle(.switch)
+                    }
+                    if viewModel.useInlineMcp {
+                        Text("Inline MCP config (first turn only)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $viewModel.mcpInlineText)
+                            .frame(minHeight: 140)
+                            .border(Color.gray.opacity(0.3))
+                            .font(.system(.body, design: .monospaced))
                     }
                 }
                 Spacer()
@@ -106,5 +129,19 @@ struct ChatView: View {
         input = ""
         viewModel.send(prompt: prompt)
         isInputFocused = true
+    }
+
+    private func browseForMcpConfig() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.json]
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                viewModel.mcpConfigPath = url.path
+                viewModel.mcpEnabled = true
+            }
+        }
     }
 }

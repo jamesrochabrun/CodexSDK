@@ -57,6 +57,7 @@ public enum CodexExecError: Error, CustomStringConvertible {
     case processLaunchFailed(String)
     case nonZeroExit(exitCode: Int32, stderr: String)
     case timeout(TimeInterval)
+    case invalidConfiguration(String)
 
     public var description: String {
         switch self {
@@ -70,6 +71,8 @@ public enum CodexExecError: Error, CustomStringConvertible {
             return "codex exec exited with code \(code): \(stderr)"
         case .timeout(let seconds):
             return "codex exec timed out after \(seconds) seconds."
+        case .invalidConfiguration(let message):
+            return "Invalid configuration: \(message)"
         }
     }
 }
@@ -82,6 +85,7 @@ public struct CodexExecOptions: Sendable {
     public var model: String?
     public var profile: String?
     public var useOSSBackend: Bool = false
+    public var approval: CodexApprovalMode?
     public var sandbox: CodexSandboxPolicy?
     public var fullAuto: Bool = false
     public var yolo: Bool = false
@@ -102,10 +106,12 @@ public struct CodexExecOptions: Sendable {
     public var promptViaStdin: Bool = true
     public var timeout: TimeInterval?
     public var extraFlags: [String] = []
+    public var mcpConfigPath: String?
+    public var mcpServers: [String: McpServerConfig]?
 
     public init() {}
 
-    fileprivate func buildArgumentList() -> [String] {
+    fileprivate func buildArgumentList() throws -> [String] {
         var args: [String] = []
 
         for image in imagePaths {
@@ -116,6 +122,12 @@ public struct CodexExecOptions: Sendable {
         if let model {
             args.append("--model")
             args.append(shellEscape(model))
+        }
+
+        if let approval {
+            // The newer CLI accepts approval as config override; safer than old --ask-for-approval flag
+            args.append("-c")
+            args.append(shellEscape("approval=\(approval.rawValue)"))
         }
 
         if let profile {
@@ -171,6 +183,26 @@ public struct CodexExecOptions: Sendable {
         for (key, value) in configOverrides {
             args.append("-c")
             args.append(shellEscape("\(key)=\(value)"))
+        }
+
+        if let mcpConfigPath {
+            args.append("--mcp-config")
+            args.append(shellEscape(mcpConfigPath))
+        } else if let mcpServers {
+            let payload = McpConfigPayload(mcpServers: mcpServers)
+            let jsonData = try JSONEncoder().encode(payload)
+            guard let jsonString = String(data: jsonData, encoding: .utf8) else {
+                throw CodexExecError.invalidConfiguration("Failed to encode MCP servers.")
+            }
+            let temp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mcp-\(UUID().uuidString).json")
+            do {
+                try jsonString.write(to: temp, atomically: true, encoding: .utf8)
+            } catch {
+                throw CodexExecError.invalidConfiguration("Failed to write MCP config: \(error.localizedDescription)")
+            }
+            args.append("--mcp-config")
+            args.append(shellEscape(temp.path))
         }
 
         if jsonEvents {
@@ -231,6 +263,35 @@ public enum CodexExecEvent: Sendable {
     case jsonEvent(CodexJSONEvent)
 }
 
+public struct McpServerConfig: Codable, Sendable {
+    public var command: String?
+    public var args: [String]?
+    public var env: [String: String]?
+    public var type: String?
+    public var url: String?
+    public var headers: [String: String]?
+
+    public init(
+        command: String? = nil,
+        args: [String]? = nil,
+        env: [String: String]? = nil,
+        type: String? = nil,
+        url: String? = nil,
+        headers: [String: String]? = nil
+    ) {
+        self.command = command
+        self.args = args
+        self.env = env
+        self.type = type
+        self.url = url
+        self.headers = headers
+    }
+}
+
+private struct McpConfigPayload: Codable {
+    let mcpServers: [String: McpServerConfig]
+}
+
 public struct CodexExecResult: Sendable {
     public let command: String
     public let stdout: String
@@ -282,7 +343,7 @@ public final class CodexExecClient: @unchecked Sendable {
             throw CodexExecError.promptRequired
         }
 
-        let commandString = buildCommand(
+        let commandString = try buildCommand(
             prompt: prompt,
             options: options,
             sendPromptViaStdin: shouldSendPromptViaStdin
@@ -403,11 +464,22 @@ public final class CodexExecClient: @unchecked Sendable {
             }
         }
 
+        actor TimeoutFlag {
+            private(set) var fired = false
+            func mark() { fired = true }
+            func value() -> Bool { fired }
+        }
+        let timeoutFlag = TimeoutFlag()
+
         let timeoutTask = options.timeout.map { timeout in
             Task { [weak process] in
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 guard let process, process.isRunning else { return }
+                await timeoutFlag.mark()
                 process.terminate()
+                if process.isRunning {
+                    process.interrupt()
+                }
             }
         }
 
@@ -435,6 +507,10 @@ public final class CodexExecClient: @unchecked Sendable {
         let snapshot = await collector.snapshot()
         let stdoutString = snapshot.stdout.joined(separator: "\n")
         let stderrString = snapshot.stderr.joined(separator: "\n")
+
+        if await timeoutFlag.value() {
+            throw CodexExecError.timeout(options.timeout ?? 0)
+        }
 
         if terminationStatus != 0 {
             throw CodexExecError.nonZeroExit(
@@ -470,8 +546,8 @@ public final class CodexExecClient: @unchecked Sendable {
         prompt: String,
         options: CodexExecOptions,
         sendPromptViaStdin: Bool
-    ) -> String {
-        var parts: [String] = [configuration.command, "exec"]
+    ) throws -> String {
+        var parts: [String] = [shellEscape(configuration.command), "exec"]
 
         if let sessionId = options.resumeSessionId {
             parts.append(contentsOf: ["resume", shellEscape(sessionId)])
@@ -479,7 +555,7 @@ public final class CodexExecClient: @unchecked Sendable {
             parts.append(contentsOf: ["resume", "--last"])
         }
 
-        parts.append(contentsOf: options.buildArgumentList())
+        parts.append(contentsOf: try options.buildArgumentList())
 
         if !prompt.isEmpty {
             if sendPromptViaStdin {

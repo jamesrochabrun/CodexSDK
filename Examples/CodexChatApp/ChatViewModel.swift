@@ -29,6 +29,10 @@ final class ChatViewModel: ObservableObject {
     @Published var currentModel: String = "gpt-5.1-codex-max" {
         didSet { refreshStatusText() }
     }
+    @Published var mcpConfigPath: String = ""
+    @Published var mcpEnabled: Bool = false
+    @Published var useInlineMcp: Bool = false
+    @Published var mcpInlineText: String = ChatViewModel.defaultInlineMcpConfig
 
     private let client: CodexExecClient
     private var hasSession = false
@@ -72,6 +76,35 @@ final class ChatViewModel: ObservableObject {
             options.resumeLastSession = hasSession
             // codex exec resume does not accept --model; only send model on first turn
             options.model = hasSession ? nil : currentModel
+            // MCP only on first turn
+            if !hasSession && mcpEnabled {
+                if useInlineMcp {
+                    guard let path = writeInlineMcpConfigValidated() else {
+                        isStreaming = false
+                        return
+                    }
+                    options.mcpConfigPath = path
+                } else {
+                    let trimmed = mcpConfigPath.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else {
+                        let message = "MCP config path is empty."
+                        lastErrorMessage = message
+                        hasError = true
+                        finalizeAssistantMessage(with: "Error: \(message)")
+                        isStreaming = false
+                        return
+                    }
+                    guard FileManager.default.fileExists(atPath: trimmed) else {
+                        let message = "MCP config path does not exist."
+                        lastErrorMessage = message
+                        hasError = true
+                        finalizeAssistantMessage(with: "Error: \(message)")
+                        isStreaming = false
+                        return
+                    }
+                    options.mcpConfigPath = trimmed
+                }
+            }
 
             var stdoutBuffer = ""
             var stderrBuffer = ""
@@ -150,4 +183,49 @@ final class ChatViewModel: ObservableObject {
         let versionInfo = codexBinaryVersion.map { " (\($0))" } ?? " (version unknown)"
         statusText = "codex: \(codexBinaryPath)\(versionInfo) • sandbox: \(currentSandbox.rawValue) • json: \(useJsonEvents ? "on" : "off") • model: \(currentModel)"
     }
+
+    private func writeInlineMcpConfigValidated() -> String? {
+        let trimmed = mcpInlineText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            let message = "Inline MCP config is empty."
+            lastErrorMessage = message
+            hasError = true
+            finalizeAssistantMessage(with: "Error: \(message)")
+            return nil
+        }
+
+        // Validate JSON
+        guard let data = trimmed.data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: data)) != nil else {
+            let message = "Inline MCP config is not valid JSON."
+            lastErrorMessage = message
+            hasError = true
+            finalizeAssistantMessage(with: "Error: \(message)")
+            return nil
+        }
+
+        let temp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mcp-inline-\(UUID().uuidString).json")
+        do {
+            try trimmed.write(to: temp, atomically: true, encoding: .utf8)
+            return temp.path
+        } catch {
+            let message = "Failed to write MCP config: \(error.localizedDescription)"
+            lastErrorMessage = message
+            hasError = true
+            finalizeAssistantMessage(with: "Error: \(message)")
+            return nil
+        }
+    }
+
+    private static let defaultInlineMcpConfig = """
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+"""
 }
