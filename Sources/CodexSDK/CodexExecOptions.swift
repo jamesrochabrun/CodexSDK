@@ -8,35 +8,63 @@
 import Foundation
 
 public struct CodexExecOptions: Sendable {
+  /// Model override (first turn only).
   public var model: String?
+  /// Config profile name.
   public var profile: String?
+  /// Use OSS provider instead of OpenAI.
   public var useOSSBackend: Bool = false
+  /// Approval mode (config override).
   public var approval: CodexApprovalMode?
+  /// Sandbox policy (first turn only; resume rejects).
   public var sandbox: CodexSandboxPolicy?
+  /// Send `--full-auto` (first turn only; resume rejects).
   public var fullAuto: Bool = false
+  /// Send `--dangerously-bypass-approvals-and-sandbox`.
   public var yolo: Bool = false
+  /// Working directory override (`--cd`).
   public var changeDirectory: String?
+  /// Additional writeable directories (`--add-dir`).
   public var additionalWriteDirectories: [String] = []
+  /// Skip git repo check (`--skip-git-repo-check`).
   public var skipGitRepoCheck: Bool = false
+  /// Enable web search (`--search`).
   public var enableSearch: Bool = false
+  /// Feature toggles (`--enable`).
   public var enableFeatures: [String] = []
+  /// Feature disables (`--disable`).
   public var disableFeatures: [String] = []
+  /// Config overrides (`-c key=value`).
   public var configOverrides: [String: String] = [:]
+  /// Emit JSON events (`--json`, first turn only).
   public var jsonEvents: Bool = false
+  /// Structured output schema (`--output-schema`).
   public var outputSchema: String?
+  /// Save final message to file (`--output-last-message`).
   public var outputFile: String?
+  /// Color mode (`--color`).
   public var colorMode: CodexColorMode?
+  /// Attach images (`--image`).
   public var imagePaths: [String] = []
+  /// Resume specific session id.
   public var resumeSessionId: String?
+  /// Resume last session.
   public var resumeLastSession: Bool = false
+  /// Send prompt via stdin (`-`) when true (default).
   public var promptViaStdin: Bool = true
+  /// Timeout in seconds (client-side).
   public var timeout: TimeInterval?
+  /// Extra raw flags appended verbatim.
   public var extraFlags: [String] = []
+  /// MCP config file path (first turn only).
   public var mcpConfigPath: String?
+  /// MCP servers (programmatic) to encode as `--mcp-config` (first turn only).
   public var mcpServers: [String: McpServerConfig]?
   
   public init() {}
   
+  /// Build the CLI argument list for `codex exec`.
+  /// - Throws: `CodexExecError.invalidConfiguration` on MCP encoding/write failures.
   func buildArgumentList() throws -> [String] {
     var args: [String] = []
     

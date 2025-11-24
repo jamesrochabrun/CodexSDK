@@ -7,12 +7,19 @@
 
 import Foundation
 
+/// Errors surfaced by `CodexExecClient`.
 public enum CodexExecError: Error, CustomStringConvertible {
+  /// Missing prompt when required.
   case promptRequired
+  /// Codex CLI binary not found in PATH or at provided command.
   case commandNotFound(String)
+  /// Process could not launch (e.g., permissions, missing shell).
   case processLaunchFailed(String)
+  /// Process exited non-zero with stderr details.
   case nonZeroExit(exitCode: Int32, stderr: String)
+  /// Process terminated after exceeding timeout (seconds).
   case timeout(TimeInterval)
+  /// Invalid SDK/CLI configuration (e.g., MCP encoding/write failure).
   case invalidConfiguration(String)
   
   public var description: String {
