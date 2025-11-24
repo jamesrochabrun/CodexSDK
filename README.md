@@ -55,6 +55,7 @@ Two demos ship with the package:
 
 - Terminal example (stdin): `swift run CodexExample`
 - SwiftUI chat app: `swift run CodexChatApp`
+- Example sources live under `Examples/` (e.g., `Examples/CodexExample`, `Examples/CodexChatApp`).
 
 ### SwiftUI chat app controls
 - JSON events toggle: applies to the first turn only. Codex CLI rejects `--json` on `resume`, so follow-up turns always drop it (stdout/stderr still stream).

@@ -32,11 +32,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "CodexExample",
-            dependencies: ["CodexSDK"]
+            dependencies: ["CodexSDK"],
+            path: "Examples/CodexExample"
         ),
         .executableTarget(
             name: "CodexChatApp",
-            dependencies: ["CodexSDK"]
+            dependencies: ["CodexSDK"],
+            path: "Examples/CodexChatApp"
         )
     ]
 )
