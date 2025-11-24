@@ -105,6 +105,12 @@ next.resumeLastSession = true
 // DO NOT set jsonEvents/model/sandbox/fullAuto here; resume rejects them
 let followup = try await client.run(prompt: "times 10", options: next)
 print(followup.stdout) // "40"
+
+// With MCP (first turn only)
+var firstWithMcp = CodexExecOptions()
+firstWithMcp.mcpConfigPath = "/path/to/mcp-config.json"
+let mcpResult = try await client.run(prompt: "List files via MCP", options: firstWithMcp)
+print(mcpResult.stdout)
 ```
 
 Example JSON event stream (stdout when `jsonEvents` is true on the first turn):
@@ -164,11 +170,12 @@ Two demos ship with the package:
 - Sandbox picker: sent on the first turn only (resume rejects `--sandbox`).
 - Model: sent on the first turn only (resume rejects `--model`).
 - Full auto: sent on the first turn only (resume rejects `--full-auto`).
+- MCP: optional. Provide a config path via the file picker or inline JSON editor (validated) on the first turn only. Follow-ups drop MCP flags.
 - Messages are copyable; Enter submits; Send button also bound to Return.
 
 ### Session behavior
 - First turn uses `codex exec` with the selected options.
-- Follow-up turns use `codex exec resume --last` with a reduced flag set (no `--json`, `--model`, `--sandbox`, `--full-auto`), because the CLI rejects those on resume.
+- Follow-up turns use `codex exec resume --last` with a reduced flag set (no `--json`, `--model`, `--sandbox`, `--full-auto`, `--mcp-config`), because the CLI rejects those on resume.
 - Output shown is stdout only; stderr is suppressed unless an error occurs, in which case it’s appended as “Logs”.
 
 ### Expected outputs in the chat demo
@@ -189,3 +196,20 @@ config.additionalPaths = ["/Users/<you>/.nvm/versions/node/vXX/bin"]
 - If you see “unexpected argument '--json'” or similar on follow-ups, remember: only the first turn can send `--json`; follow-ups drop it automatically. Use the toggle only to affect the next new session.
 - If `codex` is not found, add your Node/bin path via `CodexExecConfiguration.additionalPaths` or set `config.command` to the full path.
 - If the CLI panics or exits non-zero, the chat bubble will show the error plus any output collected so far.
+
+### Option matrix (first turn vs resume)
+| Option | First turn (`exec`) | Resume (`exec resume`) | Notes |
+| --- | --- | --- | --- |
+| `jsonEvents` (`--json`) | Allowed | Dropped | Resume rejects `--json` |
+| `sandbox` (`--sandbox`) | Allowed | Dropped | Resume rejects `--sandbox` |
+| `model` (`--model`) | Allowed | Dropped | Resume rejects `--model` |
+| `fullAuto` (`--full-auto`) | Allowed | Dropped | Resume rejects `--full-auto` |
+| `approval` (`-c approval=`) | Allowed | Dropped | Use config override; not sent on resume |
+| `mcpConfigPath` / `mcpServers` (`--mcp-config`) | Allowed | Dropped | MCP is first-turn only |
+| `outputSchema` (`--output-schema`) | Allowed | Allowed (best on first turn) | Structured output |
+| `outputFile` (`--output-last-message`) | Allowed | Allowed | Saves final message |
+| `imagePaths` (`--image`) | Allowed | Allowed | |
+| `changeDirectory` (`--cd`) | Allowed | Allowed | |
+| `additionalWriteDirectories` (`--add-dir`) | Allowed | Allowed | |
+| `configOverrides` (`-c`) | Allowed | Allowed | |
+| `promptViaStdin` (`-`) | Allowed | Allowed | |
