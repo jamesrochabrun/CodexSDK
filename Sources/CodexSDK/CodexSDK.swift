@@ -1,14 +1,2 @@
-// The Swift Programming Language
-// https://docs.swift.org/swift-book
-// 
-// Swift Argument Parser
-// https://swiftpackageindex.com/apple/swift-argument-parser/documentation
-
-import ArgumentParser
-
-@main
-struct CodexSDK: ParsableCommand {
-    mutating func run() throws {
-        print("Hello, world!")
-    }
-}
+// CodexSDK entry point for consumers.
+// The main types are declared in CodexExecClient.swift.

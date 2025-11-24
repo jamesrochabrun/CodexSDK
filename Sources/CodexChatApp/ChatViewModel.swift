@@ -1,0 +1,153 @@
+import Foundation
+import SwiftUI
+import CodexSDK
+
+enum ChatRole {
+    case user
+    case assistant
+}
+
+struct ChatMessage: Identifiable {
+    let id = UUID()
+    let role: ChatRole
+    let text: String
+}
+
+@MainActor
+final class ChatViewModel: ObservableObject {
+    @Published var messages: [ChatMessage] = []
+    @Published var isStreaming: Bool = false
+    @Published var hasError: Bool = false
+    @Published var lastErrorMessage: String?
+    @Published var statusText: String = ""
+    @Published var useJsonEvents: Bool = false {
+        didSet { refreshStatusText() }
+    }
+    @Published var currentSandbox: CodexSandboxPolicy = .readOnly {
+        didSet { refreshStatusText() }
+    }
+    @Published var currentModel: String = "gpt-5.1-codex-max" {
+        didSet { refreshStatusText() }
+    }
+
+    private let client: CodexExecClient
+    private var hasSession = false
+    private var codexBinaryVersion: String?
+    private var codexBinaryPath: String = "codex"
+
+    init() {
+        var config = CodexExecConfiguration.default
+        config.enableDebugLogging = false
+        if let detected = CodexBinaryDetector.detect() {
+            config.command = detected.path
+            codexBinaryPath = detected.path
+            codexBinaryVersion = detected.version
+            let dir = (detected.path as NSString).deletingLastPathComponent
+            config.additionalPaths = [dir]
+        } else {
+            // Fallback to PATH lookup; status will show warning
+            config.command = codexBinaryPath
+            codexBinaryVersion = nil
+        }
+        self.client = CodexExecClient(configuration: config)
+        refreshStatusText()
+    }
+
+    func send(prompt: String) {
+        let userMessage = ChatMessage(role: .user, text: prompt)
+        messages.append(userMessage)
+        lastErrorMessage = nil
+        hasError = false
+        isStreaming = true
+
+        Task {
+            var options = CodexExecOptions()
+            // Only send --json on the first turn; resume rejects it
+            options.jsonEvents = (!hasSession) && useJsonEvents
+            options.promptViaStdin = true
+            // Avoid sending sandbox on resume; codex exec resume rejects it
+            options.sandbox = hasSession ? nil : currentSandbox
+            // Avoid --full-auto on resume; resume rejects it
+            options.fullAuto = hasSession ? false : true
+            options.resumeLastSession = hasSession
+            // codex exec resume does not accept --model; only send model on first turn
+            options.model = hasSession ? nil : currentModel
+
+            var stdoutBuffer = ""
+            var stderrBuffer = ""
+
+            do {
+                let _ = try await client.run(prompt: prompt, options: options) { event in
+                    switch event {
+                    case .jsonEvent(let json):
+                        // Prefer agent_message text if present
+                        if let text = json.item?.text, json.item?.type == "agent_message" {
+                            Task { @MainActor in
+                                stdoutBuffer += text + "\n"
+                                self.updateAssistantPlaceholder(with: stdoutBuffer)
+                            }
+                        }
+                    case .stdout(let line):
+                        Task { @MainActor in
+                            stdoutBuffer += line + "\n"
+                            self.updateAssistantPlaceholder(with: stdoutBuffer)
+                        }
+                    case .stderr(let line):
+                        Task { @MainActor in
+                            stderrBuffer += line + "\n"
+                        }
+                    }
+                }
+
+                hasSession = true
+                let finalOutput = stdoutBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                let fallbackLogs = stderrBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                finalizeAssistantMessage(with: finalOutput.isEmpty ? (fallbackLogs.isEmpty ? "(no output)" : fallbackLogs) : finalOutput)
+            } catch {
+                let message = friendlyMessage(for: error)
+                lastErrorMessage = message
+                hasError = true
+                let details: String
+                let outputSoFar = stdoutBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                let logs = stderrBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !outputSoFar.isEmpty {
+                    details = "\n\nOutput so far:\n\(outputSoFar)"
+                } else if !logs.isEmpty {
+                    details = "\n\nLogs:\n\(logs)"
+                } else {
+                    details = ""
+                }
+                finalizeAssistantMessage(with: "Error: \(message)\(details)")
+            }
+
+            isStreaming = false
+        }
+    }
+
+    private func updateAssistantPlaceholder(with text: String) {
+        if let last = messages.last, last.role == .assistant {
+            messages.removeLast()
+        }
+        let placeholder = ChatMessage(role: .assistant, text: text)
+        messages.append(placeholder)
+    }
+
+    private func finalizeAssistantMessage(with text: String) {
+        if let last = messages.last, last.role == .assistant {
+            messages.removeLast()
+        }
+        messages.append(ChatMessage(role: .assistant, text: text))
+    }
+
+    private func friendlyMessage(for error: Error) -> String {
+        if let codexError = error as? CodexExecError {
+            return codexError.localizedDescription
+        }
+        return error.localizedDescription
+    }
+
+    private func refreshStatusText() {
+        let versionInfo = codexBinaryVersion.map { " (\($0))" } ?? " (version unknown)"
+        statusText = "codex: \(codexBinaryPath)\(versionInfo) • sandbox: \(currentSandbox.rawValue) • json: \(useJsonEvents ? "on" : "off") • model: \(currentModel)"
+    }
+}
