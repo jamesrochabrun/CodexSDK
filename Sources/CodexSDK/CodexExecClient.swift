@@ -4,12 +4,21 @@ public final class CodexExecClient: @unchecked Sendable {
   private let configuration: CodexExecConfiguration
   private let decoder: JSONDecoder
   
+  /// Create a Codex exec client.
+  /// - Parameter configuration: Shell/command/environment configuration. Defaults to `CodexExecConfiguration.default`.
   public init(configuration: CodexExecConfiguration = .default) {
     self.configuration = configuration
     self.decoder = JSONDecoder()
     self.decoder.keyDecodingStrategy = .convertFromSnakeCase
   }
   
+  /// Run a Codex exec turn.
+  /// - Parameters:
+  ///   - prompt: Text to send. If `options.promptViaStdin` is true (default), this is piped via stdin; otherwise passed as an argument.
+  ///   - options: CLI flag mapping (sandbox/model/jsonEvents/etc.). For resume, drop flags the CLI rejects (`jsonEvents`, `sandbox`, `model`, `fullAuto`, `mcpConfigPath`/`mcpServers`).
+  ///   - onEvent: Optional streaming callback for stdout/stderr/JSON events (first turn only for JSON).
+  /// - Returns: `CodexExecResult` containing stdout/stderr/events and exit info.
+  /// - Throws: `CodexExecError` on invalid prompt, missing binary, non-zero exit, timeout, or config/JSON errors.
   public func run(
     prompt: String,
     options: CodexExecOptions = CodexExecOptions(),
@@ -31,6 +40,13 @@ public final class CodexExecClient: @unchecked Sendable {
     }
   }
   
+  /// Internal executor that builds the command string and spawns the process.
+  /// - Parameters:
+  ///   - prompt: Text to send.
+  ///   - options: Exec options (already validated for resume).
+  ///   - onEvent: Streaming callback.
+  /// - Returns: `CodexExecResult`.
+  /// - Throws: `CodexExecError`.
   private func runInternal(
     prompt: String,
     options: CodexExecOptions,
@@ -104,6 +120,16 @@ public final class CodexExecClient: @unchecked Sendable {
     )
   }
   
+  /// Stream stdout/stderr (and optional JSON events) for a running Process, apply timeout, and collect results.
+  /// - Parameters:
+  ///   - process: Spawned `Process`.
+  ///   - stdoutPipe: Pipe for stdout.
+  ///   - stderrPipe: Pipe for stderr.
+  ///   - commandString: Human-readable command (for error reporting).
+  ///   - options: Exec options (timeout, jsonEvents, etc.).
+  ///   - onEvent: Streaming callback.
+  /// - Returns: `CodexExecResult`.
+  /// - Throws: `CodexExecError` on timeout, non-zero exit, or launch failure.
   private func runProcess(
     process: Process,
     stdoutPipe: Pipe,
@@ -228,6 +254,11 @@ public final class CodexExecClient: @unchecked Sendable {
     )
   }
   
+  /// Decode a single JSON event line; returns nil on parse failure.
+  /// - Parameters:
+  ///   - line: Raw JSONL line.
+  ///   - decoder: JSON decoder to use.
+  /// - Returns: Parsed `CodexJSONEvent` with `rawLine` set, or nil.
   private func decodeJSONEvent(line: String, decoder: JSONDecoder) -> CodexJSONEvent? {
     guard let data = line.data(using: .utf8) else { return nil }
     do {
@@ -242,6 +273,13 @@ public final class CodexExecClient: @unchecked Sendable {
     }
   }
   
+  /// Build the shell command string for `codex exec`, including resume logic and prompt handling.
+  /// - Parameters:
+  ///   - prompt: Text to send (passed as arg or stdin marker).
+  ///   - options: Exec options to serialize into CLI flags.
+  ///   - sendPromptViaStdin: If true, append `-` and pipe prompt via stdin.
+  /// - Returns: Shell-escaped command string.
+  /// - Throws: `CodexExecError.invalidConfiguration` if MCP encoding fails.
   private func buildCommand(
     prompt: String,
     options: CodexExecOptions,
