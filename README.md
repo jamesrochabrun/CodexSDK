@@ -1,4 +1,5 @@
 # CodexSDK
+<img width="3616" height="1184" alt="Image" src="https://github.com/user-attachments/assets/55273242-f52f-4853-b076-db3b13d2fc5a" />
 
 Swift wrapper around the `codex exec` headless mode. It spawns the Codex CLI as a subprocess, sends prompts via stdin by default, and optionally parses the CLI `--json` event stream for automation-friendly workflows.
 
