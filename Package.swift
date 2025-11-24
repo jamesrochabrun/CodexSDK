@@ -12,10 +12,6 @@ let package = Package(
             targets: ["CodexSDK"]
         ),
         .executable(
-            name: "CodexExample",
-            targets: ["CodexExample"]
-        ),
-        .executable(
             name: "CodexChatApp",
             targets: ["CodexChatApp"]
         )
@@ -29,11 +25,6 @@ let package = Package(
         .testTarget(
             name: "CodexSDKTests",
             dependencies: ["CodexSDK"]
-        ),
-        .executableTarget(
-            name: "CodexExample",
-            dependencies: ["CodexSDK"],
-            path: "Examples/CodexExample"
         ),
         .executableTarget(
             name: "CodexChatApp",
