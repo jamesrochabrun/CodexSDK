@@ -4,6 +4,7 @@ import Foundation
 @main
 struct CodexExampleApp {
   static func main() async {
+    // For automatic nvm detection, use: CodexExecClient(configuration: .withNvmSupport())
     let client = CodexExecClient()
     var options = CodexExecOptions()
     options.sandbox = .readOnly

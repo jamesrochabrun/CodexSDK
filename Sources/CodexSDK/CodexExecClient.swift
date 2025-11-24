@@ -86,7 +86,8 @@ public final class CodexExecClient: @unchecked Sendable {
     if !configuration.additionalPaths.isEmpty {
       let combined = configuration.additionalPaths.joined(separator: ":")
       if let current = environment["PATH"], !current.isEmpty {
-        environment["PATH"] = "\(current):\(combined)"
+        // Prepend additionalPaths so they take priority over shell PATH
+        environment["PATH"] = "\(combined):\(current)"
       } else {
         environment["PATH"] = combined
       }

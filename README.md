@@ -175,8 +175,8 @@ Two demos ship with the package:
 
 ### Session behavior
 - First turn uses `codex exec` with the selected options.
-- Follow-up turns use `codex exec resume --last` with a reduced flag set (no `--json`, `--model`, `--sandbox`, `--full-auto`, `--mcp-config`), because the CLI rejects those on resume.
-- Output shown is stdout only; stderr is suppressed unless an error occurs, in which case it’s appended as “Logs”.
+- Follow-up turns use `codex exec resume --last` with a reduced flag set (no `--json`, `--model`, `--sandbox`, `--full-auto`, `--cd`, `--mcp-config`), because the CLI rejects those on resume.
+- Output shown is stdout only; stderr is suppressed unless an error occurs, in which case it's appended as "Logs".
 
 ### Expected outputs in the chat demo
 - First turn with JSON on: stdout shows events (and parsed events drive the UI), stderr is hidden unless an error.
@@ -184,17 +184,38 @@ Two demos ship with the package:
 - Errors: bubble shows the error plus any stdout/logs captured so far (no silent spinner).
 
 ### Binary selection
-The chat app auto-detects the highest codex version it can find (PATH, common nvm dirs, Homebrew). The status bar shows the active binary path/version, sandbox, JSON state, and model.
 
-If auto-detection fails or you want to pin a path, set it in `ChatViewModel`:
+#### Automatic NVM Detection (Recommended)
+The SDK includes automatic nvm (Node Version Manager) detection. This is the recommended approach:
+
+```swift
+// Automatically detects and prioritizes nvm-installed codex over Homebrew
+var config = CodexExecConfiguration.withNvmSupport()
+config.enableDebugLogging = false
+config.useLoginShell = true
+
+let client = CodexExecClient(configuration: config)
+```
+
+The `withNvmSupport()` method:
+- Automatically detects your nvm installation at `~/.nvm`
+- Reads the default node version from `~/.nvm/alias/default`
+- Falls back to the latest installed version if no default is set
+- Prepends nvm paths to ensure they take priority over Homebrew installations
+- Safely returns standard configuration if nvm is not installed
+
+This solves the common issue where GUI apps find older Homebrew codex installations instead of newer nvm versions.
+
+#### Manual Path Configuration (Alternative)
+If you need to manually specify a path:
 ```swift
 config.command = "/Users/<you>/.nvm/versions/node/vXX/bin/codex"
-config.additionalPaths = ["/Users/<you>/.nvm/versions/node/vXX/bin"]
 ```
 
 ### Troubleshooting
-- If you see “unexpected argument '--json'” or similar on follow-ups, remember: only the first turn can send `--json`; follow-ups drop it automatically. Use the toggle only to affect the next new session.
-- If `codex` is not found, add your Node/bin path via `CodexExecConfiguration.additionalPaths` or set `config.command` to the full path.
+- If you see "unexpected argument '--json'" or similar on follow-ups, remember: only the first turn can send `--json`; follow-ups drop it automatically. Use the toggle only to affect the next new session.
+- If `codex` is not found, use `CodexExecConfiguration.withNvmSupport()` for automatic detection, or set `config.command` to the full path manually.
+- **If you see "Not inside a trusted directory" on resume**: Set `config.workingDirectory` to your project path. Resume commands don't accept `--cd`, so the process working directory must be set at the configuration level. This ensures both first turn and resume commands run from the correct directory.
 - If the CLI panics or exits non-zero, the chat bubble will show the error plus any output collected so far.
 
 ### Option matrix (first turn vs resume)
@@ -209,7 +230,7 @@ config.additionalPaths = ["/Users/<you>/.nvm/versions/node/vXX/bin"]
 | `outputSchema` (`--output-schema`) | Allowed | Allowed (best on first turn) | Structured output |
 | `outputFile` (`--output-last-message`) | Allowed | Allowed | Saves final message |
 | `imagePaths` (`--image`) | Allowed | Allowed | |
-| `changeDirectory` (`--cd`) | Allowed | Allowed | |
+| `changeDirectory` (`--cd`) | Allowed | **Dropped** | Resume rejects `--cd`; use `config.workingDirectory` instead |
 | `additionalWriteDirectories` (`--add-dir`) | Allowed | Allowed | |
 | `configOverrides` (`-c`) | Allowed | Allowed | |
 | `promptViaStdin` (`-`) | Allowed | Allowed | |
