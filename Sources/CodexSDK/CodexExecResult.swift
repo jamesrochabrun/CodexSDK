@@ -50,6 +50,10 @@ public struct CodexJSONEventItem: Decodable, Sendable {
   public let status: String?
   public let text: String?
   public let command: String?
+  /// Output from command_execution events.
+  public let aggregatedOutput: String?
+  /// Exit code from command_execution events.
+  public let exitCode: Int?
 }
 
 /// Usage info from JSON events.

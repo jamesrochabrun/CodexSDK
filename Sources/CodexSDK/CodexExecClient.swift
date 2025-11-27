@@ -122,6 +122,7 @@ public final class CodexExecClient: @unchecked Sendable {
   }
   
   /// Stream stdout/stderr (and optional JSON events) for a running Process, apply timeout, and collect results.
+  /// Uses readabilityHandler for immediate data delivery (no buffering).
   /// - Parameters:
   ///   - process: Spawned `Process`.
   ///   - stdoutPipe: Pipe for stdout.
@@ -140,119 +141,243 @@ public final class CodexExecClient: @unchecked Sendable {
     onEvent: (@Sendable (CodexExecEvent) -> Void)?
   ) async throws -> CodexExecResult {
     let decoder = self.decoder
-    
+    let enableLogging = configuration.enableDebugLogging
+
     let stdoutHandle = stdoutPipe.fileHandleForReading
     let stderrHandle = stderrPipe.fileHandleForReading
-    
-    actor StreamCollector {
-      private var stdoutLines = [String]()
-      private var stderrLines = [String]()
-      private var events = [CodexJSONEvent]()
-      
-      func addStdout(_ line: String) {
-        stdoutLines.append(line)
-      }
-      
-      func addStderr(_ line: String) {
-        stderrLines.append(line)
-      }
-      
-      func addEvent(_ event: CodexJSONEvent) {
-        events.append(event)
-      }
-      
-      func snapshot() -> (stdout: [String], stderr: [String], events: [CodexJSONEvent]) {
-        (stdoutLines, stderrLines, events)
-      }
-    }
-    
+
+    // Thread-safe collectors for stdout/stderr/events
     let collector = StreamCollector()
-    
-    let stdoutTask = Task { () throws -> Void in
-      for try await line in stdoutHandle.bytes.lines {
-        let stringLine = String(line)
-        await collector.addStdout(stringLine)
-        
-        if options.jsonEvents,
-           let event = self.decodeJSONEvent(line: stringLine, decoder: decoder) {
-          await collector.addEvent(event)
-          onEvent?(.jsonEvent(event))
-        } else {
-          onEvent?(.stdout(stringLine))
-        }
-      }
-    }
-    
-    let stderrTask = Task { () throws -> Void in
-      for try await line in stderrHandle.bytes.lines {
-        let stringLine = String(line)
-        await collector.addStderr(stringLine)
-        onEvent?(.stderr(stringLine))
-      }
-    }
-    
+    let stdoutBuffer = StreamBuffer()
+    let stderrBuffer = StreamBuffer()
+
+    // Timeout tracking
     actor TimeoutFlag {
       private(set) var fired = false
       func mark() { fired = true }
       func value() -> Bool { fired }
     }
     let timeoutFlag = TimeoutFlag()
-    
-    let timeoutTask = options.timeout.map { timeout in
-      Task { [weak process] in
-        try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-        guard let process, process.isRunning else { return }
-        await timeoutFlag.mark()
-        process.terminate()
-        if process.isRunning {
-          process.interrupt()
+
+    return try await withCheckedThrowingContinuation { continuation in
+      // Set up stdout readability handler - fires immediately when data arrives
+      stdoutHandle.readabilityHandler = { [weak self] fileHandle in
+        let data = fileHandle.availableData
+        guard !data.isEmpty else {
+          // EOF reached
+          fileHandle.readabilityHandler = nil
+          // Process any remaining data in buffer
+          Task {
+            if let remaining = await stdoutBuffer.getString(), !remaining.isEmpty {
+              await collector.addStdout(remaining)
+              if options.jsonEvents,
+                 let event = self?.decodeJSONEvent(line: remaining, decoder: decoder) {
+                await collector.addEvent(event)
+                onEvent?(.jsonEvent(event))
+              } else {
+                onEvent?(.stdout(remaining))
+              }
+            }
+          }
+          return
+        }
+
+        Task {
+          await stdoutBuffer.append(data)
+
+          guard let outputString = await stdoutBuffer.getString() else { return }
+
+          let lines = outputString.components(separatedBy: .newlines)
+
+          // Process complete lines (all except potentially incomplete last one)
+          if lines.count > 1 {
+            // Keep only incomplete last line in buffer
+            if let lastLine = lines.last, !lastLine.isEmpty {
+              if let lastLineData = lastLine.data(using: .utf8) {
+                await stdoutBuffer.set(lastLineData)
+              }
+            } else {
+              await stdoutBuffer.set(Data())
+            }
+
+            // Process all complete lines immediately
+            for i in 0..<lines.count-1 where !lines[i].isEmpty {
+              let line = lines[i]
+              await collector.addStdout(line)
+
+              if enableLogging {
+                print("[CodexSDK] 📥 STDOUT: \(line)")
+              }
+
+              if options.jsonEvents,
+                 let event = self?.decodeJSONEvent(line: line, decoder: decoder) {
+                if enableLogging {
+                  print("[CodexSDK] 📦 JSON Event: \(event.type)")
+                }
+                await collector.addEvent(event)
+                onEvent?(.jsonEvent(event))
+              } else {
+                onEvent?(.stdout(line))
+              }
+            }
+          }
+        }
+      }
+
+      // Set up stderr readability handler
+      stderrHandle.readabilityHandler = { fileHandle in
+        let data = fileHandle.availableData
+        guard !data.isEmpty else {
+          fileHandle.readabilityHandler = nil
+          Task {
+            if let remaining = await stderrBuffer.getString(), !remaining.isEmpty {
+              await collector.addStderr(remaining)
+              onEvent?(.stderr(remaining))
+            }
+          }
+          return
+        }
+
+        Task {
+          await stderrBuffer.append(data)
+
+          guard let outputString = await stderrBuffer.getString() else { return }
+
+          let lines = outputString.components(separatedBy: .newlines)
+
+          if lines.count > 1 {
+            if let lastLine = lines.last, !lastLine.isEmpty {
+              if let lastLineData = lastLine.data(using: .utf8) {
+                await stderrBuffer.set(lastLineData)
+              }
+            } else {
+              await stderrBuffer.set(Data())
+            }
+
+            for i in 0..<lines.count-1 where !lines[i].isEmpty {
+              let line = lines[i]
+              await collector.addStderr(line)
+              if enableLogging {
+                print("[CodexSDK] ⚠️ STDERR: \(line)")
+              }
+              onEvent?(.stderr(line))
+            }
+          }
+        }
+      }
+
+      // Set up timeout task
+      var timeoutTask: Task<Void, Never>?
+      if let timeout = options.timeout {
+        timeoutTask = Task { [weak process] in
+          try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+          guard let process, process.isRunning else { return }
+          await timeoutFlag.mark()
+          process.terminate()
+          if process.isRunning {
+            process.interrupt()
+          }
+        }
+      }
+
+      // Handle process termination
+      process.terminationHandler = { [collector, timeoutFlag, timeoutTask] terminatedProcess in
+        // Clean up handlers
+        stdoutHandle.readabilityHandler = nil
+        stderrHandle.readabilityHandler = nil
+        timeoutTask?.cancel()
+
+        Task {
+          // Small delay to ensure all readability handlers have processed
+          try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+
+          let snapshot = await collector.snapshot()
+          let stdoutString = snapshot.stdout.joined(separator: "\n")
+          let stderrString = snapshot.stderr.joined(separator: "\n")
+
+          if await timeoutFlag.value() {
+            continuation.resume(throwing: CodexExecError.timeout(options.timeout ?? 0))
+            return
+          }
+
+          if terminatedProcess.terminationStatus != 0 {
+            continuation.resume(throwing: CodexExecError.nonZeroExit(
+              exitCode: terminatedProcess.terminationStatus,
+              stderr: stderrString
+            ))
+            return
+          }
+
+          let result = CodexExecResult(
+            command: commandString,
+            stdout: stdoutString,
+            stderr: stderrString,
+            exitCode: terminatedProcess.terminationStatus,
+            events: snapshot.events
+          )
+          continuation.resume(returning: result)
+        }
+      }
+
+      // Launch the process
+      do {
+        try process.run()
+      } catch {
+        stdoutHandle.readabilityHandler = nil
+        stderrHandle.readabilityHandler = nil
+        timeoutTask?.cancel()
+
+        if (error as NSError).code == NSFileNoSuchFileError {
+          continuation.resume(throwing: CodexExecError.commandNotFound(commandString))
+        } else {
+          continuation.resume(throwing: CodexExecError.processLaunchFailed(error.localizedDescription))
         }
       }
     }
-    
-    do {
-      try process.run()
-    } catch {
-      timeoutTask?.cancel()
-      if (error as NSError).code == NSFileNoSuchFileError {
-        throw CodexExecError.commandNotFound(commandString)
-      } else {
-        throw CodexExecError.processLaunchFailed(error.localizedDescription)
-      }
+  }
+
+  /// Thread-safe buffer for accumulating streaming data
+  private actor StreamBuffer {
+    private var buffer = Data()
+
+    func append(_ data: Data) {
+      buffer.append(data)
     }
-    
-    let terminationStatus = await Task.detached { () -> Int32 in
-      process.waitUntilExit()
-      return process.terminationStatus
-    }.value
-    
-    timeoutTask?.cancel()
-    
-    do { try await stdoutTask.value } catch { /* ignore stream errors */ }
-    do { try await stderrTask.value } catch { /* ignore stream errors */ }
-    
-    let snapshot = await collector.snapshot()
-    let stdoutString = snapshot.stdout.joined(separator: "\n")
-    let stderrString = snapshot.stderr.joined(separator: "\n")
-    
-    if await timeoutFlag.value() {
-      throw CodexExecError.timeout(options.timeout ?? 0)
+
+    func set(_ data: Data) {
+      buffer = data
     }
-    
-    if terminationStatus != 0 {
-      throw CodexExecError.nonZeroExit(
-        exitCode: terminationStatus,
-        stderr: stderrString
-      )
+
+    func isEmpty() -> Bool {
+      return buffer.isEmpty
     }
-    
-    return CodexExecResult(
-      command: commandString,
-      stdout: stdoutString,
-      stderr: stderrString,
-      exitCode: terminationStatus,
-      events: snapshot.events
-    )
+
+    func getString() -> String? {
+      return String(data: buffer, encoding: .utf8)
+    }
+  }
+
+  /// Thread-safe collector for stdout/stderr/events
+  private actor StreamCollector {
+    private var stdoutLines = [String]()
+    private var stderrLines = [String]()
+    private var events = [CodexJSONEvent]()
+
+    func addStdout(_ line: String) {
+      stdoutLines.append(line)
+    }
+
+    func addStderr(_ line: String) {
+      stderrLines.append(line)
+    }
+
+    func addEvent(_ event: CodexJSONEvent) {
+      events.append(event)
+    }
+
+    func snapshot() -> (stdout: [String], stderr: [String], events: [CodexJSONEvent]) {
+      (stdoutLines, stderrLines, events)
+    }
   }
   
   /// Decode a single JSON event line; returns nil on parse failure.
@@ -261,7 +386,13 @@ public final class CodexExecClient: @unchecked Sendable {
   ///   - decoder: JSON decoder to use.
   /// - Returns: Parsed `CodexJSONEvent` with `rawLine` set, or nil.
   private func decodeJSONEvent(line: String, decoder: JSONDecoder) -> CodexJSONEvent? {
-    guard let data = line.data(using: .utf8) else { return nil }
+    // Skip empty lines or non-JSON lines
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.hasPrefix("{") else {
+      return nil
+    }
+
+    guard let data = trimmed.data(using: .utf8) else { return nil }
     do {
       var event = try decoder.decode(CodexJSONEvent.self, from: data)
       event.rawLine = line
@@ -287,15 +418,15 @@ public final class CodexExecClient: @unchecked Sendable {
     sendPromptViaStdin: Bool
   ) throws -> String {
     var parts: [String] = [shellEscape(configuration.command), "exec"]
-    
+
     if let sessionId = options.resumeSessionId {
       parts.append(contentsOf: ["resume", shellEscape(sessionId)])
     } else if options.resumeLastSession {
       parts.append(contentsOf: ["resume", "--last"])
     }
-    
+
     parts.append(contentsOf: try options.buildArgumentList())
-    
+
     if !prompt.isEmpty {
       if sendPromptViaStdin {
         parts.append("-")
@@ -303,7 +434,7 @@ public final class CodexExecClient: @unchecked Sendable {
         parts.append(shellEscape(prompt))
       }
     }
-    
+
     return parts.joined(separator: " ")
   }
   
