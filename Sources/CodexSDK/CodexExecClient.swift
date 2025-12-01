@@ -95,6 +95,10 @@ public final class CodexExecClient: @unchecked Sendable {
     configuration.environment.forEach { key, value in
       environment[key] = value
     }
+    // Inject CODEX_API_KEY if provided
+    if let apiKey = configuration.apiKey {
+      environment["CODEX_API_KEY"] = apiKey
+    }
     process.environment = environment
     
     let stdoutPipe = Pipe()

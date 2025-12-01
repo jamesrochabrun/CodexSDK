@@ -23,6 +23,8 @@ public struct CodexExecConfiguration {
   public var useLoginShell: Bool
   /// Enable verbose debug logging to stdout/stderr.
   public var enableDebugLogging: Bool
+  /// API key for Codex CLI (sets `CODEX_API_KEY` environment variable).
+  public var apiKey: String?
   
   /// Create a configuration.
   /// - Parameters:
@@ -33,6 +35,7 @@ public struct CodexExecConfiguration {
   ///   - shell: Shell to execute (default: `/bin/zsh`).
   ///   - useLoginShell: Launch shell with `-l` (default: true).
   ///   - enableDebugLogging: Emit debug logs (default: false).
+  ///   - apiKey: API key for Codex CLI (sets `CODEX_API_KEY` environment variable).
   public init(
     command: String = "codex",
     workingDirectory: String? = nil,
@@ -40,7 +43,8 @@ public struct CodexExecConfiguration {
     environment: [String: String] = [:],
     shell: String = "/bin/zsh",
     useLoginShell: Bool = true,
-    enableDebugLogging: Bool = false
+    enableDebugLogging: Bool = false,
+    apiKey: String? = nil
   ) {
     self.command = command
     self.workingDirectory = workingDirectory
@@ -49,6 +53,7 @@ public struct CodexExecConfiguration {
     self.shell = shell
     self.useLoginShell = useLoginShell
     self.enableDebugLogging = enableDebugLogging
+    self.apiKey = apiKey
   }
   
   /// Default configuration (`codex`, login shell, no extra PATH/ENV).
