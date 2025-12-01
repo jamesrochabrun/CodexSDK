@@ -49,7 +49,7 @@ print(result.stdout) // Validated JSON matching your schema
 
 ## Key types
 - `CodexExecClient` – orchestrates the subprocess call to `codex exec`.
-- `CodexExecConfiguration` – defaults to `/bin/zsh -l -c codex exec`, with hooks for working directory, PATH augmentation, and env overrides.
+- `CodexExecConfiguration` – defaults to `/bin/zsh -l -c codex exec`, with hooks for working directory, PATH augmentation, env overrides, and API key injection.
 - `CodexExecOptions` – maps the Codex CLI flags you are likely to automate:
   - Access: `sandbox`, `approval`, `fullAuto`, `yolo`, `useOSSBackend`
   - Output: `jsonEvents`, `outputSchema` (validate final answer), `outputFile`, `colorMode`
@@ -64,6 +64,49 @@ print(result.stdout) // Validated JSON matching your schema
 - When `jsonEvents` is enabled, `stdout` will still contain the raw JSONL stream; parsed entries are also exposed via `CodexExecResult.events`.
 - Timeouts terminate the subprocess and surface a `CodexExecError.timeout` error.
 - For nvm-based installations, use `CodexExecConfiguration.additionalPaths` to append your Node.js paths to `PATH` before spawning the CLI.
+
+## Authentication
+
+### Using API Key
+You can authenticate with the Codex CLI using an API key via `CodexExecConfiguration.apiKey`:
+```swift
+var config = CodexExecConfiguration()
+config.apiKey = "your-api-key-here"  // Sets CODEX_API_KEY environment variable
+
+let client = CodexExecClient(configuration: config)
+```
+
+This automatically sets the `CODEX_API_KEY` environment variable for the subprocess, matching the behavior of:
+```shell
+CODEX_API_KEY=your-api-key-here codex exec "your prompt"
+```
+
+## JSON Event Types
+
+When `jsonEvents` is enabled, the SDK parses all event types from the Codex CLI:
+
+### Event Types
+| Type | Description |
+| --- | --- |
+| `thread.started` | Thread started or resumed (includes `threadId`) |
+| `turn.started` | Turn begins |
+| `turn.completed` | Turn completes (includes `usage` with token counts) |
+| `turn.failed` | Turn failed (includes `error`) |
+| `item.started` | Item processing started |
+| `item.updated` | Item updated during processing |
+| `item.completed` | Item processing completed |
+| `error` | Unrecoverable stream error |
+
+### Item Types
+| Type | Description | Dedicated Fields |
+| --- | --- | --- |
+| `agent_message` | Assistant message | `text` |
+| `reasoning` | Summary of assistant's thinking | `text` |
+| `command_execution` | Command execution | `command`, `aggregatedOutput`, `exitCode` |
+| `file_change` | File modification | `filePath`, `diff` |
+| `mcp_tool_call` | MCP tool invocation | `toolName`, `toolArguments`, `toolResult` |
+| `web_search` | Web search | `query`, `results` (array of `CodexWebSearchResult`) |
+| `todo_list` | Agent's running plan | `items` (array of `CodexTodoItem`) |
 
 ## Usage patterns
 
