@@ -59,6 +59,14 @@ public struct CodexTodoItem: Decodable, Sendable {
   public let status: String?
 }
 
+/// File change entry from `file_change` item type.
+public struct CodexFileChange: Decodable, Sendable {
+  /// Full path to the changed file.
+  public let path: String?
+  /// Kind of change: "create", "update", "delete".
+  public let kind: String?
+}
+
 /// Type-erased JSON value for flexible decoding (e.g., MCP tool arguments).
 /// Uses `@unchecked Sendable` since JSON values (strings, numbers, bools, arrays, dicts) are inherently safe.
 public struct AnyCodable: Decodable, @unchecked Sendable, CustomStringConvertible {
@@ -110,10 +118,12 @@ public struct CodexJSONEventItem: Decodable, Sendable {
   public let exitCode: Int?
 
   // MARK: - file_change fields
-  /// File path for file_change events.
+  /// File path for file_change events (legacy format).
   public let filePath: String?
-  /// Diff content for file_change events.
+  /// Diff content for file_change events (legacy format).
   public let diff: String?
+  /// Array of file changes for file_change events (current CLI format).
+  public let changes: [CodexFileChange]?
 
   // MARK: - mcp_tool_call fields
   /// Tool name for mcp_tool_call events.
